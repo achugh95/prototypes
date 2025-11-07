@@ -1,0 +1,35 @@
+[App] cursor.execute("SELECT ...")
+   ↓
+[libpq] PQsendQuery() → formats SQL, calls PQflush()
+   ↓
+[libpq] PQflush() → calls SSL_write(ssl, "SELECT ...", 25)
+   ↓
+[OpenSSL] SSL_write():
+   1. Split into records (1 record for 25 bytes)
+   2. Encrypt: AES-GCM(plaintext="SELECT ...", key=session_key) → ciphertext
+   3. Frame: [0x17][0x03 0x03][length][ciphertext][auth_tag]
+   4. send(socket_fd, tls_record, record_len, 0)
+   ↓
+[Kernel] TCP: segments data, sends packets to NIC
+   ↓
+[Network] Packets travel through routers/switches/firewalls
+   ↓
+[Database Server NIC] Receives packets, TCP reassembles
+   ↓
+[Database OpenSSL] recv(socket_fd, buffer, ...) → reads TLS record
+   ↓
+[Database OpenSSL] SSL_read():
+   1. Parse record header
+   2. Decrypt: AES-GCM(ciphertext, key) → plaintext="SELECT ..."
+   3. Verify auth_tag for integrity
+   4. Return plaintext to PostgreSQL process
+   ↓
+[PostgreSQL] Executes query, formats response
+   ↓
+[Database OpenSSL] SSL_write(response_data)
+   ↓
+... reverse flow back to client ...
+   ↓
+[libpq] SSL_read() → decrypts response
+   ↓
+[App] cursor.fetchall() → gets plaintext rows
